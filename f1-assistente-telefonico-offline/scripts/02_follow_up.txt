@@ -1,0 +1,19 @@
+F1 IMMOBILIARE — FOLLOW-UP
+
+APERTURA
+Buongiorno, sono Joseph. La ricontatto in merito alla presentazione che le avevo inviato.
+
+DOMANDA
+È riuscito a darle un’occhiata? Quale parte le è sembrata più utile?
+
+OBIETTIVO
+Concordare una breve chiamata organizzativa o un incontro conoscitivo.
+
+CHIUSURA
+Preferisce sentirci al mattino oppure nel pomeriggio?
+
+[RISPOSTA:PIU_AVANTI]
+Va bene. Quale periodo sarebbe più corretto per ricontattarla senza disturbarla?
+
+[RISPOSTA:APPUNTAMENTO]
+Perfetto. Preferisce una breve chiamata organizzativa al mattino oppure nel pomeriggio?
