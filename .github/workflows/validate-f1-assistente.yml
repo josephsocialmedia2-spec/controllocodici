@@ -1,0 +1,25 @@
+name: Validate F1 Assistente Telefonico
+
+on:
+  push:
+    paths:
+      - "f1-assistente-telefonico-offline/**"
+  pull_request:
+    paths:
+      - "f1-assistente-telefonico-offline/**"
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: f1-assistente-telefonico-offline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python files
+        run: python -m compileall -q app.py f1 tools tests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
