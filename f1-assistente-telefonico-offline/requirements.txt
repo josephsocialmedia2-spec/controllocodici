@@ -1,0 +1,4 @@
+vosk==0.3.45
+SoundCard==0.4.4
+numpy>=1.26,<3
+cffi>=1.15
