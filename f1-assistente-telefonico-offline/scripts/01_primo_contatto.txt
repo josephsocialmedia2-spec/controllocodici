@@ -1,0 +1,28 @@
+F1 IMMOBILIARE — PRIMO CONTATTO
+
+OBIETTIVO
+Ottenere un contatto utile e concordare il passo successivo senza pressione.
+
+APERTURA
+Buongiorno, sono Joseph. Posso rubarle un minuto per spiegarle perché la sto contattando?
+
+POSIZIONAMENTO
+Lavoro sulla promozione e comunicazione degli immobili, in affiancamento alla parte tecnica abilitata.
+
+DOMANDA
+Qual è oggi la difficoltà principale che sta incontrando nella vendita?
+
+CHIUSURA
+Le invio una presentazione breve. Qual è il contatto migliore?
+
+[RISPOSTA:NON_INTERESSATO]
+Capisco. Le invio una presentazione breve, così potrà valutarla con calma quando sarà il momento.
+
+[RISPOSTA:NESSUN_TEMPO]
+Comprendo. Mi bastano dieci minuti in un momento concordato, senza farle perdere tempo oggi.
+
+[RISPOSTA:NON_FIRMO]
+Non le sto chiedendo di firmare nulla. Le spiego il metodo e poi valuta liberamente.
+
+[RISPOSTA:CURIOSI]
+Le visite vengono organizzate e filtrate, così si evita di perdere tempo con persone non realmente interessate.
