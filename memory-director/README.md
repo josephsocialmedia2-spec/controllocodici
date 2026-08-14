@@ -1,22 +1,29 @@
-# Memory Director
+# Memory Director - ChatGPT dedicato
 
-Applicazione Windows per trasformare concetti di studio in sedute di memorizzazione guidata basate su micro-concetti, film mentale, PAV, sensorialita e active recall.
+Build Windows C# testata con GitHub Actions.
 
-## Architettura
+## Modalita principale: ChatGPT web dedicato
 
-Questa versione abbandona PowerShell e il server browser locale. E una applicazione **C# WinForms compilata** che comunica direttamente con Ollama su `http://127.0.0.1:11434` e usa il modello `qwen3:4b`.
+La conversazione usata e:
 
-## Avvio su Windows
+`https://chatgpt.com/c/6a7a16c8-8a94-83eb-9492-001e95b12c67`
 
-1. Assicurarsi che Ollama sia in esecuzione e che `qwen3:4b` sia installato.
-2. Fare doppio clic su `BUILD_AND_RUN.bat`.
-3. Lo script compila prima un eseguibile di test, esegue i self-test e **solo se passano** compila e avvia `MemoryDirector.exe`.
+Il programma non tenta di pilotare internamente il sito ChatGPT. L'API ufficiale OpenAI non consente di inviare messaggi direttamente a una conversazione web esistente identificata da un URL `/c/...`.
 
-## Test inclusi
+Flusso:
 
-- rimozione code fence JSON;
-- costruzione del prompt mnemonico;
-- validazione della struttura della seduta;
-- parsing della risposta JSON annidata di Ollama.
+1. Incolla il materiale da memorizzare.
+2. Premi **COPIA PROMPT + APRI CHATGPT**.
+3. Nella conversazione ChatGPT dedicata premi `CTRL+V` e invia.
+4. ChatGPT restituisce il JSON della seduta.
+5. Copia la risposta completa.
+6. Torna a Memory Director e premi **IMPORTA RISPOSTA CHATGPT**.
+7. La seduta diventa disponibile per voce guidata e active recall.
 
-GitHub Actions compila e testa il progetto su `windows-latest` a ogni modifica.
+## Fallback Ollama
+
+Resta disponibile **GENERA CON OLLAMA** usando `qwen3:4b` locale su `http://127.0.0.1:11434`.
+
+## Test
+
+La CI Windows compila l'EXE e avvia `--self-test`. I test verificano anche l'URL della conversazione ChatGPT dedicata e non richiedono rete.
