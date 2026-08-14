@@ -1,0 +1,69 @@
+name: Memory Director Cascade Voice - Windows build and test
+
+on:
+  push:
+    branches:
+      - memory-director-chatgpt-final
+    paths:
+      - 'memory-director-chatgpt/MemoryDirector.Cascade.cs'
+      - 'memory-director-chatgpt/README.md'
+      - '.github/workflows/memory-director-cascade-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-build-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate .NET Framework compiler
+        shell: powershell
+        run: |
+          $candidates = @(
+            "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+            "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          )
+          $csc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $csc) { throw "csc.exe .NET Framework non trovato" }
+          "CSC=$csc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile self-test executable
+        shell: cmd
+        run: >
+          "%CSC%" /nologo /target:exe /optimize+
+          /out:memory-director-chatgpt\MemoryDirector.Cascade.Tests.exe
+          /reference:System.Windows.Forms.dll
+          /reference:System.Drawing.dll
+          /reference:System.Web.Extensions.dll
+          memory-director-chatgpt\MemoryDirector.Cascade.cs
+
+      - name: Run self-tests
+        shell: cmd
+        run: memory-director-chatgpt\MemoryDirector.Cascade.Tests.exe --self-test
+
+      - name: Compile Windows application
+        shell: cmd
+        run: >
+          "%CSC%" /nologo /target:winexe /optimize+
+          /out:memory-director-chatgpt\MemoryDirector.Cascade.exe
+          /reference:System.Windows.Forms.dll
+          /reference:System.Drawing.dll
+          /reference:System.Web.Extensions.dll
+          memory-director-chatgpt\MemoryDirector.Cascade.cs
+
+      - name: Package tested release
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist-cascade | Out-Null
+          Copy-Item memory-director-chatgpt\MemoryDirector.Cascade.exe dist-cascade\MemoryDirector.Cascade.exe
+          Copy-Item memory-director-chatgpt\README.md dist-cascade\README.md
+          Compress-Archive -Path dist-cascade\MemoryDirector.Cascade.exe,dist-cascade\README.md -DestinationPath dist-cascade\MemoryDirector_Cascade_Voice_Windows.zip -Force
+
+      - name: Upload tested Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MemoryDirector-Cascade-Voice-tested
+          path: dist-cascade/MemoryDirector_Cascade_Voice_Windows.zip
+          if-no-files-found: error
