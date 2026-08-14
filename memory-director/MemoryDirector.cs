@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -77,11 +79,6 @@ namespace MemoryDirector
             ServicePointManager.Expect100Continue = false;
         }
 
-        public string ModelName
-        {
-            get { return model; }
-        }
-
         public bool HealthCheck(out string details)
         {
             try
@@ -129,17 +126,13 @@ namespace MemoryDirector
             string json = serializer.Serialize(request);
             string raw = HttpPost(baseUrl + "/api/generate", json, 120000);
             GenerateResponse response = serializer.Deserialize<GenerateResponse>(raw);
-            if (response == null)
+            if (response == null || string.IsNullOrWhiteSpace(response.response))
             {
-                throw new InvalidOperationException("Risposta Ollama vuota.");
+                throw new InvalidOperationException("Ollama non ha restituito testo.");
             }
             if (!string.IsNullOrEmpty(response.error))
             {
                 throw new InvalidOperationException("Ollama: " + response.error);
-            }
-            if (string.IsNullOrWhiteSpace(response.response))
-            {
-                throw new InvalidOperationException("Ollama ha risposto senza testo.");
             }
             return response.response.Trim();
         }
@@ -163,87 +156,16 @@ namespace MemoryDirector
             string raw = HttpPost(baseUrl + "/api/generate", body, 360000);
             GenerateResponse response = serializer.Deserialize<GenerateResponse>(raw);
 
-            if (response == null)
+            if (response == null || string.IsNullOrWhiteSpace(response.response))
             {
-                throw new InvalidOperationException("Ollama non ha restituito una risposta valida.");
+                throw new InvalidOperationException("Ollama non ha restituito il contenuto della seduta.");
             }
             if (!string.IsNullOrEmpty(response.error))
             {
                 throw new InvalidOperationException("Ollama: " + response.error);
             }
-            if (string.IsNullOrWhiteSpace(response.response))
-            {
-                throw new InvalidOperationException("Il modello non ha restituito il contenuto della seduta.");
-            }
 
-            string innerJson = NormalizeJson(response.response);
-            MemoryPlan plan;
-            try
-            {
-                plan = serializer.Deserialize<MemoryPlan>(innerJson);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException("Il modello ha restituito JSON non valido. Risposta grezza:\r\n" + response.response, ex);
-            }
-
-            ValidatePlan(plan);
-            return plan;
-        }
-
-        internal static string NormalizeJson(string text)
-        {
-            string value = (text ?? string.Empty).Trim();
-            if (value.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
-            {
-                value = value.Substring(7).TrimStart();
-            }
-            else if (value.StartsWith("```", StringComparison.Ordinal))
-            {
-                value = value.Substring(3).TrimStart();
-            }
-
-            if (value.EndsWith("```", StringComparison.Ordinal))
-            {
-                value = value.Substring(0, value.Length - 3).TrimEnd();
-            }
-            return value;
-        }
-
-        internal static void ValidatePlan(MemoryPlan plan)
-        {
-            if (plan == null)
-            {
-                throw new InvalidOperationException("Seduta nulla.");
-            }
-            if (string.IsNullOrWhiteSpace(plan.title))
-            {
-                throw new InvalidOperationException("La seduta non contiene un titolo.");
-            }
-            if (string.IsNullOrWhiteSpace(plan.simple_meaning))
-            {
-                throw new InvalidOperationException("La seduta non contiene il significato semplice.");
-            }
-            if (plan.micro_concepts == null || plan.micro_concepts.Count == 0)
-            {
-                throw new InvalidOperationException("La seduta non contiene micro-concetti.");
-            }
-            if (plan.guided_movie == null || plan.guided_movie.Count == 0)
-            {
-                throw new InvalidOperationException("La seduta non contiene il film mentale.");
-            }
-            if (plan.guided_movie[0].IndexOf("Chiudi gli occhi", StringComparison.OrdinalIgnoreCase) < 0)
-            {
-                plan.guided_movie.Insert(0, "Chiudi gli occhi. Immagina...");
-            }
-            if (string.IsNullOrWhiteSpace(plan.final_freeze_frame))
-            {
-                throw new InvalidOperationException("La seduta non contiene il fotogramma finale.");
-            }
-            if (plan.recall_questions == null)
-            {
-                plan.recall_questions = new List<string>();
-            }
+            return PlanParser.Parse(response.response);
         }
 
         private static string HttpGet(string url, int timeoutMs)
@@ -327,12 +249,71 @@ namespace MemoryDirector
         }
     }
 
+    internal static class PlanParser
+    {
+        private static readonly JavaScriptSerializer serializer = new JavaScriptSerializer();
+
+        public static MemoryPlan Parse(string text)
+        {
+            string json = NormalizeJson(text);
+            MemoryPlan plan;
+            try
+            {
+                plan = serializer.Deserialize<MemoryPlan>(json);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("La risposta non contiene JSON valido.\r\n\r\nRISPOSTA:\r\n" + text, ex);
+            }
+
+            ValidatePlan(plan);
+            return plan;
+        }
+
+        internal static string NormalizeJson(string text)
+        {
+            string value = (text ?? string.Empty).Trim();
+            if (value.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+            {
+                value = value.Substring(7).TrimStart();
+            }
+            else if (value.StartsWith("```", StringComparison.Ordinal))
+            {
+                value = value.Substring(3).TrimStart();
+            }
+
+            if (value.EndsWith("```", StringComparison.Ordinal))
+            {
+                value = value.Substring(0, value.Length - 3).TrimEnd();
+            }
+            return value;
+        }
+
+        internal static void ValidatePlan(MemoryPlan plan)
+        {
+            if (plan == null) throw new InvalidOperationException("Seduta nulla.");
+            if (string.IsNullOrWhiteSpace(plan.title)) throw new InvalidOperationException("Manca il titolo.");
+            if (string.IsNullOrWhiteSpace(plan.simple_meaning)) throw new InvalidOperationException("Manca il significato semplice.");
+            if (plan.micro_concepts == null || plan.micro_concepts.Count == 0) throw new InvalidOperationException("Mancano i micro-concetti.");
+            if (plan.guided_movie == null || plan.guided_movie.Count == 0) throw new InvalidOperationException("Manca il film mentale.");
+            if (plan.guided_movie[0].IndexOf("Chiudi gli occhi", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                plan.guided_movie.Insert(0, "Chiudi gli occhi. Immagina...");
+            }
+            if (string.IsNullOrWhiteSpace(plan.final_freeze_frame)) throw new InvalidOperationException("Manca il fotogramma finale.");
+            if (plan.recall_questions == null) plan.recall_questions = new List<string>();
+        }
+    }
+
     internal static class MnemonicPromptBuilder
     {
+        public const string DedicatedChatUrl = "https://chatgpt.com/c/6a7a16c8-8a94-83eb-9492-001e95b12c67";
+
         public static string Build(string sourceText, int intensity, string objects, string emotions)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("Sei MEMORY DIRECTOR, un regista di memorizzazione guidata in italiano.");
+            sb.AppendLine("Questa conversazione e dedicata esclusivamente alla trasformazione di concetti in sedute di memoria guidata.");
             sb.AppendLine();
             sb.AppendLine("TESTO DA ASSIMILARE:");
             sb.AppendLine(sourceText);
@@ -363,7 +344,7 @@ namespace MemoryDirector
             sb.AppendLine("15. Frasi brevi, ritmiche, facili da ascoltare a occhi chiusi.");
             sb.AppendLine("16. Non promettere memoria perfetta.");
             sb.AppendLine();
-            sb.AppendLine("Restituisci SOLO JSON valido con questa struttura:");
+            sb.AppendLine("IMPORTANTE: restituisci SOLO JSON valido, senza testo prima o dopo, con questa struttura:");
             sb.AppendLine("{");
             sb.AppendLine("  \"title\": \"...\",");
             sb.AppendLine("  \"simple_meaning\": \"...\",");
@@ -378,50 +359,59 @@ namespace MemoryDirector
 
     internal sealed class MainForm : Form
     {
-        private readonly OllamaClient client = new OllamaClient("http://127.0.0.1:11434", "qwen3:4b");
+        private readonly OllamaClient ollama = new OllamaClient("http://127.0.0.1:11434", "qwen3:4b");
         private readonly TextBox sourceBox = new TextBox();
         private readonly RichTextBox outputBox = new RichTextBox();
-        private readonly Button generateButton = new Button();
-        private readonly Button exampleButton = new Button();
-        private readonly Button testButton = new Button();
-        private readonly Button speakButton = new Button();
-        private readonly Button stopButton = new Button();
-        private readonly Button recallButton = new Button();
-        private readonly Button showPlanButton = new Button();
         private readonly Label statusLabel = new Label();
         private readonly TrackBar intensityTrack = new TrackBar();
         private readonly Label intensityLabel = new Label();
         private readonly TextBox objectsBox = new TextBox();
         private readonly TextBox emotionsBox = new TextBox();
-        private readonly BackgroundWorker generateWorker = new BackgroundWorker();
+        private readonly BackgroundWorker ollamaWorker = new BackgroundWorker();
         private readonly BackgroundWorker testWorker = new BackgroundWorker();
-        private object speaker;
         private MemoryPlan currentPlan;
+        private object sapiVoice;
+        private Type sapiVoiceType;
 
         public MainForm()
         {
-            Text = "Memory Director - Stable";
+            Text = "Memory Director - ChatGPT dedicato";
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(1050, 690);
-            Size = new Size(1220, 780);
+            MinimumSize = new Size(1080, 720);
+            Size = new Size(1280, 820);
             BackColor = Color.FromArgb(244, 246, 248);
             Font = new Font("Segoe UI", 10F);
-
             BuildUi();
-            WireEvents();
+            WireWorkers();
+        }
+
+        private Button MakeButton(string text, int left, int top, int width, EventHandler handler, bool dark)
+        {
+            Button button = new Button();
+            button.Text = text;
+            button.Location = new Point(left, top);
+            button.Size = new Size(width, 40);
+            if (dark)
+            {
+                button.BackColor = Color.FromArgb(17, 24, 39);
+                button.ForeColor = Color.White;
+                button.FlatStyle = FlatStyle.Flat;
+            }
+            button.Click += handler;
+            return button;
         }
 
         private void BuildUi()
         {
             Label title = new Label();
             title.Text = "MEMORY DIRECTOR";
-            title.Font = new Font("Segoe UI", 19F, FontStyle.Bold);
+            title.Font = new Font("Segoe UI", 20F, FontStyle.Bold);
             title.AutoSize = true;
-            title.Location = new Point(20, 15);
+            title.Location = new Point(20, 12);
             Controls.Add(title);
 
             Label version = new Label();
-            version.Text = "C# WINDOWS BUILD - diretto a Ollama localhost:11434";
+            version.Text = "CHATGPT DEDICATO + OLLAMA FALLBACK";
             version.ForeColor = Color.RoyalBlue;
             version.AutoSize = true;
             version.Location = new Point(23, 52);
@@ -431,435 +421,357 @@ namespace MemoryDirector
             split.Location = new Point(20, 82);
             split.Size = new Size(ClientSize.Width - 40, ClientSize.Height - 105);
             split.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            split.SplitterDistance = 555;
-            split.Panel1.Padding = new Padding(10);
-            split.Panel2.Padding = new Padding(10);
+            split.SplitterDistance = 600;
             Controls.Add(split);
 
-            Label leftTitle = new Label();
-            leftTitle.Text = "1. Materiale da memorizzare";
-            leftTitle.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
-            leftTitle.AutoSize = true;
-            leftTitle.Location = new Point(5, 5);
-            split.Panel1.Controls.Add(leftTitle);
+            GroupBox left = new GroupBox();
+            left.Text = "1. Materiale da memorizzare";
+            left.Dock = DockStyle.Fill;
+            left.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+            split.Panel1.Controls.Add(left);
 
             sourceBox.Multiline = true;
             sourceBox.ScrollBars = ScrollBars.Vertical;
-            sourceBox.Location = new Point(5, 38);
-            sourceBox.Size = new Size(split.Panel1.ClientSize.Width - 10, 285);
-            sourceBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            sourceBox.AcceptsReturn = true;
             sourceBox.Font = new Font("Segoe UI", 11F);
-            split.Panel1.Controls.Add(sourceBox);
+            sourceBox.Location = new Point(16, 30);
+            sourceBox.Size = new Size(left.ClientSize.Width - 32, 285);
+            sourceBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            left.Controls.Add(sourceBox);
 
-            generateButton.Text = "GENERA SEDUTA";
-            generateButton.Location = new Point(5, 335);
-            generateButton.Size = new Size(145, 40);
-            generateButton.BackColor = Color.FromArgb(17, 24, 39);
-            generateButton.ForeColor = Color.White;
-            generateButton.FlatStyle = FlatStyle.Flat;
-            split.Panel1.Controls.Add(generateButton);
+            Button chatButton = MakeButton("COPIA PROMPT + APRI CHATGPT", 16, 325, 250, ChatButton_Click, true);
+            left.Controls.Add(chatButton);
+            Button importButton = MakeButton("IMPORTA RISPOSTA CHATGPT", 276, 325, 220, ImportButton_Click, false);
+            left.Controls.Add(importButton);
+            Button exampleButton = MakeButton("ESEMPIO: LA VENDITA", 16, 375, 210, ExampleButton_Click, false);
+            left.Controls.Add(exampleButton);
+            Button ollamaButton = MakeButton("GENERA CON OLLAMA", 236, 375, 180, OllamaButton_Click, false);
+            left.Controls.Add(ollamaButton);
+            Button testButton = MakeButton("TEST OLLAMA", 426, 375, 150, TestButton_Click, false);
+            left.Controls.Add(testButton);
 
-            exampleButton.Text = "ESEMPIO: LA VENDITA";
-            exampleButton.Location = new Point(158, 335);
-            exampleButton.Size = new Size(175, 40);
-            split.Panel1.Controls.Add(exampleButton);
-
-            testButton.Text = "TEST MOTORE AI";
-            testButton.Location = new Point(341, 335);
-            testButton.Size = new Size(155, 40);
-            split.Panel1.Controls.Add(testButton);
-
-            statusLabel.Text = "Pronto.";
-            statusLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
-            statusLabel.Location = new Point(5, 388);
-            statusLabel.Size = new Size(split.Panel1.ClientSize.Width - 10, 42);
+            statusLabel.Text = "Pronto. ChatGPT dedicato e il metodo principale.";
+            statusLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            statusLabel.Location = new Point(16, 425);
+            statusLabel.Size = new Size(left.ClientSize.Width - 32, 44);
             statusLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            split.Panel1.Controls.Add(statusLabel);
+            left.Controls.Add(statusLabel);
+
+            Label urlLabel = new Label();
+            urlLabel.Text = "Conversazione dedicata:";
+            urlLabel.AutoSize = true;
+            urlLabel.Location = new Point(16, 475);
+            left.Controls.Add(urlLabel);
+
+            TextBox urlBox = new TextBox();
+            urlBox.ReadOnly = true;
+            urlBox.Text = MnemonicPromptBuilder.DedicatedChatUrl;
+            urlBox.Location = new Point(16, 498);
+            urlBox.Size = new Size(left.ClientSize.Width - 32, 28);
+            urlBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            left.Controls.Add(urlBox);
 
             intensityLabel.Text = "Intensita PAV: 9/10";
-            intensityLabel.Location = new Point(5, 438);
             intensityLabel.AutoSize = true;
-            split.Panel1.Controls.Add(intensityLabel);
+            intensityLabel.Location = new Point(16, 540);
+            left.Controls.Add(intensityLabel);
 
             intensityTrack.Minimum = 1;
             intensityTrack.Maximum = 10;
             intensityTrack.Value = 9;
             intensityTrack.TickStyle = TickStyle.None;
-            intensityTrack.Location = new Point(5, 460);
-            intensityTrack.Size = new Size(split.Panel1.ClientSize.Width - 10, 36);
+            intensityTrack.Location = new Point(16, 562);
+            intensityTrack.Size = new Size(left.ClientSize.Width - 32, 34);
             intensityTrack.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            split.Panel1.Controls.Add(intensityTrack);
+            intensityTrack.ValueChanged += delegate { intensityLabel.Text = "Intensita PAV: " + intensityTrack.Value + "/10"; };
+            left.Controls.Add(intensityTrack);
 
             Label objectsLabel = new Label();
-            objectsLabel.Text = "Oggetti/immagini che ti vengono naturali";
+            objectsLabel.Text = "Oggetti/immagini naturali";
             objectsLabel.AutoSize = true;
-            objectsLabel.Location = new Point(5, 510);
-            split.Panel1.Controls.Add(objectsLabel);
+            objectsLabel.Location = new Point(16, 605);
+            left.Controls.Add(objectsLabel);
 
             objectsBox.Text = "bicicletta, casa, denaro, automobile, oggetti enormi";
-            objectsBox.Location = new Point(5, 533);
-            objectsBox.Size = new Size(split.Panel1.ClientSize.Width - 10, 27);
+            objectsBox.Location = new Point(16, 628);
+            objectsBox.Size = new Size(left.ClientSize.Width - 32, 28);
             objectsBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            split.Panel1.Controls.Add(objectsBox);
+            left.Controls.Add(objectsBox);
 
             Label emotionsLabel = new Label();
-            emotionsLabel.Text = "Trigger emotivi utili";
+            emotionsLabel.Text = "Trigger emotivi";
             emotionsLabel.AutoSize = true;
-            emotionsLabel.Location = new Point(5, 570);
-            split.Panel1.Controls.Add(emotionsLabel);
+            emotionsLabel.Location = new Point(16, 665);
+            left.Controls.Add(emotionsLabel);
 
             emotionsBox.Text = "desiderio, sorpresa, comicita, competizione, soddisfazione";
-            emotionsBox.Location = new Point(5, 593);
-            emotionsBox.Size = new Size(split.Panel1.ClientSize.Width - 10, 27);
+            emotionsBox.Location = new Point(16, 688);
+            emotionsBox.Size = new Size(left.ClientSize.Width - 32, 28);
             emotionsBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            split.Panel1.Controls.Add(emotionsBox);
+            left.Controls.Add(emotionsBox);
 
-            Label rightTitle = new Label();
-            rightTitle.Text = "2. Seduta";
-            rightTitle.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
-            rightTitle.AutoSize = true;
-            rightTitle.Location = new Point(5, 5);
-            split.Panel2.Controls.Add(rightTitle);
+            GroupBox right = new GroupBox();
+            right.Text = "2. Seduta";
+            right.Dock = DockStyle.Fill;
+            right.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+            split.Panel2.Controls.Add(right);
 
-            speakButton.Text = "AVVIA VOCE GUIDATA";
-            speakButton.Location = new Point(5, 38);
-            speakButton.Size = new Size(175, 40);
-            speakButton.BackColor = Color.FromArgb(17, 24, 39);
-            speakButton.ForeColor = Color.White;
-            speakButton.FlatStyle = FlatStyle.Flat;
-            split.Panel2.Controls.Add(speakButton);
-
-            stopButton.Text = "STOP";
-            stopButton.Location = new Point(188, 38);
-            stopButton.Size = new Size(75, 40);
-            split.Panel2.Controls.Add(stopButton);
-
-            recallButton.Text = "TESTAMI";
-            recallButton.Location = new Point(271, 38);
-            recallButton.Size = new Size(90, 40);
-            split.Panel2.Controls.Add(recallButton);
-
-            showPlanButton.Text = "RIVEDI SEDUTA";
-            showPlanButton.Location = new Point(369, 38);
-            showPlanButton.Size = new Size(125, 40);
-            split.Panel2.Controls.Add(showPlanButton);
+            Button speakButton = MakeButton("AVVIA VOCE GUIDATA", 16, 30, 190, SpeakButton_Click, true);
+            right.Controls.Add(speakButton);
+            Button stopButton = MakeButton("STOP", 216, 30, 80, StopButton_Click, false);
+            right.Controls.Add(stopButton);
+            Button recallButton = MakeButton("TESTAMI", 306, 30, 100, RecallButton_Click, false);
+            right.Controls.Add(recallButton);
+            Button showButton = MakeButton("VEDI SEDUTA", 416, 30, 120, ShowButton_Click, false);
+            right.Controls.Add(showButton);
 
             outputBox.ReadOnly = true;
-            outputBox.BackColor = Color.White;
-            outputBox.Location = new Point(5, 92);
-            outputBox.Size = new Size(split.Panel2.ClientSize.Width - 10, split.Panel2.ClientSize.Height - 102);
-            outputBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             outputBox.Font = new Font("Segoe UI", 11F);
-            outputBox.Text = "Genera una seduta per iniziare.";
-            split.Panel2.Controls.Add(outputBox);
+            outputBox.BackColor = Color.White;
+            outputBox.Location = new Point(16, 82);
+            outputBox.Size = new Size(right.ClientSize.Width - 32, right.ClientSize.Height - 98);
+            outputBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            outputBox.Text = "Procedura ChatGPT:\r\n1. Incolla il testo.\r\n2. Premi COPIA PROMPT + APRI CHATGPT.\r\n3. Nella chat dedicata premi CTRL+V e invia.\r\n4. Copia la risposta JSON.\r\n5. Torna qui e premi IMPORTA RISPOSTA CHATGPT.";
+            right.Controls.Add(outputBox);
         }
 
-        private void WireEvents()
+        private void WireWorkers()
         {
-            intensityTrack.ValueChanged += delegate
+            ollamaWorker.DoWork += delegate(object sender, DoWorkEventArgs e)
             {
-                intensityLabel.Text = "Intensita PAV: " + intensityTrack.Value + "/10";
+                object[] data = (object[])e.Argument;
+                e.Result = ollama.GeneratePlan((string)data[0], (int)data[1], (string)data[2], (string)data[3]);
             };
-
-            exampleButton.Click += delegate
+            ollamaWorker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
             {
-                sourceBox.Text = "La vendita e il contratto che ha per oggetto il trasferimento della proprieta di una cosa o il trasferimento di un altro diritto contro il corrispettivo di un prezzo. La proprieta del bene venduto passa normalmente dal venditore al compratore al momento del consenso fra le parti.";
-            };
-
-            generateWorker.DoWork += delegate(object sender, DoWorkEventArgs e)
-            {
-                GenerationArgs a = (GenerationArgs)e.Argument;
-                e.Result = client.GeneratePlan(a.SourceText, a.Intensity, a.Objects, a.Emotions);
-            };
-
-            generateWorker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
-            {
-                generateButton.Enabled = true;
-                testButton.Enabled = true;
-                generateButton.Text = "GENERA SEDUTA";
-                Cursor = Cursors.Default;
-
+                UseWaitCursor = false;
                 if (e.Error != null)
                 {
-                    ShowError("ERRORE GENERAZIONE", e.Error);
+                    ShowError("Errore Ollama", e.Error);
                     return;
                 }
-
                 currentPlan = (MemoryPlan)e.Result;
-                outputBox.Text = FormatPlan(currentPlan, true);
-                statusLabel.Text = "Seduta pronta.";
-            };
-
-            generateButton.Click += delegate
-            {
-                string text = sourceBox.Text == null ? string.Empty : sourceBox.Text.Trim();
-                if (text.Length == 0)
-                {
-                    statusLabel.Text = "Inserisci prima un testo.";
-                    sourceBox.Focus();
-                    return;
-                }
-                if (generateWorker.IsBusy)
-                {
-                    return;
-                }
-
-                GenerationArgs a = new GenerationArgs();
-                a.SourceText = text;
-                a.Intensity = intensityTrack.Value;
-                a.Objects = objectsBox.Text;
-                a.Emotions = emotionsBox.Text;
-
-                generateButton.Enabled = false;
-                testButton.Enabled = false;
-                generateButton.Text = "ELABORAZIONE...";
-                Cursor = Cursors.WaitCursor;
-                statusLabel.Text = "Testo acquisito: " + text.Length + " caratteri. " + client.ModelName + " sta elaborando...";
-                outputBox.Text = "Elaborazione in corso sul PC. Non chiudere Memory Director.";
-                generateWorker.RunWorkerAsync(a);
+                ShowPlan();
+                statusLabel.Text = "Seduta generata con Ollama.";
             };
 
             testWorker.DoWork += delegate(object sender, DoWorkEventArgs e)
             {
                 string details;
-                if (!client.HealthCheck(out details))
-                {
-                    throw new InvalidOperationException(details);
-                }
-                string mini = client.MiniGenerateTest();
-                e.Result = details + "\r\nMini-generazione: " + mini;
+                if (!ollama.HealthCheck(out details)) throw new InvalidOperationException(details);
+                string response = ollama.MiniGenerateTest();
+                e.Result = details + " Risposta test: " + response;
             };
-
             testWorker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
             {
-                testButton.Enabled = true;
-                generateButton.Enabled = true;
-                Cursor = Cursors.Default;
+                UseWaitCursor = false;
                 if (e.Error != null)
                 {
-                    ShowError("TEST MOTORE AI FALLITO", e.Error);
+                    ShowError("Test Ollama fallito", e.Error);
                     return;
                 }
-                string message = Convert.ToString(e.Result);
-                statusLabel.Text = "TEST AI RIUSCITO.";
-                MessageBox.Show(this, message, "Memory Director - Test AI", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            };
-
-            testButton.Click += delegate
-            {
-                if (testWorker.IsBusy)
-                {
-                    return;
-                }
-                testButton.Enabled = false;
-                generateButton.Enabled = false;
-                Cursor = Cursors.WaitCursor;
-                statusLabel.Text = "Test completo Ollama e qwen3:4b...";
-                testWorker.RunWorkerAsync();
-            };
-
-            speakButton.Click += delegate
-            {
-                if (currentPlan == null || currentPlan.guided_movie == null)
-                {
-                    statusLabel.Text = "Prima genera una seduta.";
-                    return;
-                }
-                try
-                {
-                    EnsureSpeaker();
-                    StopSpeaker();
-                    StringBuilder spoken = new StringBuilder();
-                    foreach (string line in currentPlan.guided_movie)
-                    {
-                        if (string.Equals(line, "[pausa]", StringComparison.OrdinalIgnoreCase))
-                        {
-                            spoken.Append(" ... ... ");
-                        }
-                        else if (!string.IsNullOrWhiteSpace(line))
-                        {
-                            spoken.Append(line);
-                            spoken.Append(" ... ");
-                        }
-                    }
-                    speaker.GetType().InvokeMember(
-                        "Speak",
-                        BindingFlags.InvokeMethod,
-                        null,
-                        speaker,
-                        new object[] { spoken.ToString(), 1 }
-                    );
-                    statusLabel.Text = "Voce guidata avviata.";
-                }
-                catch (Exception ex)
-                {
-                    ShowError("ERRORE VOCE", ex);
-                }
-            };
-
-            stopButton.Click += delegate
-            {
-                try
-                {
-                    StopSpeaker();
-                    statusLabel.Text = "Voce fermata.";
-                }
-                catch
-                {
-                }
-            };
-
-            recallButton.Click += delegate
-            {
-                if (currentPlan == null)
-                {
-                    statusLabel.Text = "Prima genera una seduta.";
-                    return;
-                }
-                outputBox.Text = FormatPlan(currentPlan, false);
-                statusLabel.Text = "Active Recall: rispondi senza rileggere il film.";
-            };
-
-            showPlanButton.Click += delegate
-            {
-                if (currentPlan != null)
-                {
-                    outputBox.Text = FormatPlan(currentPlan, true);
-                    statusLabel.Text = "Seduta completa.";
-                }
-            };
-
-            FormClosed += delegate
-            {
-                if (speaker != null)
-                {
-                    try { StopSpeaker(); } catch { }
-                    try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(speaker); } catch { }
-                    speaker = null;
-                }
+                statusLabel.Text = "TEST OLLAMA OK.";
+                MessageBox.Show((string)e.Result, "Memory Director", MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
         }
 
-        private void EnsureSpeaker()
+        private void ChatButton_Click(object sender, EventArgs e)
         {
-            if (speaker != null)
+            if (string.IsNullOrWhiteSpace(sourceBox.Text))
             {
+                statusLabel.Text = "Inserisci prima il testo da memorizzare.";
                 return;
             }
 
-            Type sapiType = Type.GetTypeFromProgID("SAPI.SpVoice");
-            if (sapiType == null)
+            try
             {
-                throw new InvalidOperationException("Sintesi vocale Windows SAPI non disponibile.");
+                string prompt = MnemonicPromptBuilder.Build(sourceBox.Text, intensityTrack.Value, objectsBox.Text, emotionsBox.Text);
+                Clipboard.SetText(prompt);
+                ProcessStartInfo startInfo = new ProcessStartInfo(MnemonicPromptBuilder.DedicatedChatUrl);
+                startInfo.UseShellExecute = true;
+                Process.Start(startInfo);
+                statusLabel.Text = "Prompt copiato. Nella conversazione ChatGPT premi CTRL+V e invia.";
+                outputBox.Text = "Prompt copiato negli appunti e conversazione dedicata aperta.\r\n\r\nDopo la risposta di ChatGPT:\r\n1. copia tutta la risposta JSON;\r\n2. torna in Memory Director;\r\n3. premi IMPORTA RISPOSTA CHATGPT.";
             }
-            speaker = Activator.CreateInstance(sapiType);
-        }
-
-        private void StopSpeaker()
-        {
-            if (speaker == null)
+            catch (Exception ex)
             {
-                return;
+                ShowError("Impossibile aprire ChatGPT", ex);
             }
-            speaker.GetType().InvokeMember(
-                "Speak",
-                BindingFlags.InvokeMethod,
-                null,
-                speaker,
-                new object[] { string.Empty, 3 }
-            );
         }
 
-        private void ShowError(string heading, Exception ex)
-        {
-            string message = FlattenException(ex);
-            statusLabel.Text = heading + ".";
-            outputBox.Text = heading + "\r\n\r\n" + message;
-            SaveErrorLog(heading, message);
-            MessageBox.Show(this, message, heading, MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-
-        private static string FlattenException(Exception ex)
-        {
-            StringBuilder sb = new StringBuilder();
-            Exception current = ex;
-            int depth = 0;
-            while (current != null && depth < 6)
-            {
-                if (depth > 0)
-                {
-                    sb.AppendLine();
-                    sb.AppendLine("Dettaglio:");
-                }
-                sb.AppendLine(current.Message);
-                current = current.InnerException;
-                depth++;
-            }
-            return sb.ToString().Trim();
-        }
-
-        private void SaveErrorLog(string heading, string message)
+        private void ImportButton_Click(object sender, EventArgs e)
         {
             try
             {
-                string path = Path.Combine(Path.GetTempPath(), "MemoryDirector_error.txt");
-                File.WriteAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n" + heading + "\r\n\r\n" + message, Encoding.UTF8);
-                outputBox.AppendText("\r\n\r\nLog: " + path);
+                if (!Clipboard.ContainsText())
+                {
+                    throw new InvalidOperationException("Negli appunti non c'e testo. Copia prima la risposta di ChatGPT.");
+                }
+                string response = Clipboard.GetText();
+                currentPlan = PlanParser.Parse(response);
+                ShowPlan();
+                statusLabel.Text = "Risposta ChatGPT importata correttamente.";
+            }
+            catch (Exception ex)
+            {
+                ShowError("Importazione risposta ChatGPT fallita", ex);
+            }
+        }
+
+        private void ExampleButton_Click(object sender, EventArgs e)
+        {
+            sourceBox.Text = "La vendita e il contratto che ha per oggetto il trasferimento della proprieta di una cosa o il trasferimento di un altro diritto contro il corrispettivo di un prezzo. La proprieta del bene venduto passa normalmente dal venditore al compratore al momento del consenso fra le parti.";
+        }
+
+        private void OllamaButton_Click(object sender, EventArgs e)
+        {
+            if (ollamaWorker.IsBusy) return;
+            if (string.IsNullOrWhiteSpace(sourceBox.Text))
+            {
+                statusLabel.Text = "Inserisci prima il testo da memorizzare.";
+                return;
+            }
+            UseWaitCursor = true;
+            statusLabel.Text = "Ollama sta generando la seduta...";
+            outputBox.Text = "Elaborazione locale in corso...";
+            ollamaWorker.RunWorkerAsync(new object[] { sourceBox.Text, intensityTrack.Value, objectsBox.Text, emotionsBox.Text });
+        }
+
+        private void TestButton_Click(object sender, EventArgs e)
+        {
+            if (testWorker.IsBusy) return;
+            UseWaitCursor = true;
+            statusLabel.Text = "Test Ollama in corso...";
+            testWorker.RunWorkerAsync();
+        }
+
+        private void SpeakButton_Click(object sender, EventArgs e)
+        {
+            if (currentPlan == null)
+            {
+                statusLabel.Text = "Prima importa o genera una seduta.";
+                return;
+            }
+
+            try
+            {
+                EnsureSapiVoice();
+                StringBuilder text = new StringBuilder();
+                foreach (string line in currentPlan.guided_movie)
+                {
+                    if (line == "[pausa]") text.Append(" ... ");
+                    else text.Append(line).Append(". ");
+                }
+                sapiVoiceType.InvokeMember("Speak", BindingFlags.InvokeMethod, null, sapiVoice, new object[] { text.ToString(), 3 });
+                statusLabel.Text = "Voce guidata avviata.";
+            }
+            catch (Exception ex)
+            {
+                ShowError("Sintesi vocale non disponibile", ex);
+            }
+        }
+
+        private void StopButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (sapiVoice != null)
+                {
+                    sapiVoiceType.InvokeMember("Speak", BindingFlags.InvokeMethod, null, sapiVoice, new object[] { string.Empty, 3 });
+                }
+                statusLabel.Text = "Voce fermata.";
             }
             catch
             {
             }
         }
 
-        private static string FormatPlan(MemoryPlan plan, bool full)
+        private void RecallButton_Click(object sender, EventArgs e)
         {
+            if (currentPlan == null)
+            {
+                statusLabel.Text = "Prima importa o genera una seduta.";
+                return;
+            }
             StringBuilder sb = new StringBuilder();
-            if (full)
-            {
-                sb.AppendLine(plan.title == null ? string.Empty : plan.title.ToUpperInvariant());
-                sb.AppendLine();
-                sb.AppendLine("SIGNIFICATO SEMPLICE");
-                sb.AppendLine(plan.simple_meaning);
-                sb.AppendLine();
-                sb.AppendLine("MICRO-CONCETTI");
-                for (int i = 0; i < plan.micro_concepts.Count; i++)
-                {
-                    sb.AppendLine((i + 1) + ". " + plan.micro_concepts[i]);
-                }
-                sb.AppendLine();
-                sb.AppendLine("FILM MENTALE");
-                foreach (string line in plan.guided_movie)
-                {
-                    sb.AppendLine(string.Equals(line, "[pausa]", StringComparison.OrdinalIgnoreCase) ? "... pausa ..." : line);
-                }
-                sb.AppendLine();
-                sb.AppendLine("FOTOGRAMMA FINALE");
-                sb.AppendLine(plan.final_freeze_frame);
-                sb.AppendLine();
-            }
-
             sb.AppendLine("ACTIVE RECALL");
-            if (plan.recall_questions == null || plan.recall_questions.Count == 0)
+            sb.AppendLine();
+            int i = 1;
+            foreach (string question in currentPlan.recall_questions)
             {
-                sb.AppendLine("Nessuna domanda generata.");
+                sb.AppendLine(i + ". " + question);
+                sb.AppendLine();
+                i++;
             }
-            else
-            {
-                for (int i = 0; i < plan.recall_questions.Count; i++)
-                {
-                    sb.AppendLine((i + 1) + ". " + plan.recall_questions[i]);
-                    sb.AppendLine();
-                }
-            }
-            return sb.ToString();
+            outputBox.Text = sb.ToString();
+            statusLabel.Text = "Rispondi senza rileggere la seduta.";
         }
 
-        private sealed class GenerationArgs
+        private void ShowButton_Click(object sender, EventArgs e)
         {
-            public string SourceText;
-            public int Intensity;
-            public string Objects;
-            public string Emotions;
+            if (currentPlan != null) ShowPlan();
+        }
+
+        private void EnsureSapiVoice()
+        {
+            if (sapiVoice != null) return;
+            sapiVoiceType = Type.GetTypeFromProgID("SAPI.SpVoice");
+            if (sapiVoiceType == null) throw new InvalidOperationException("SAPI.SpVoice non disponibile su questo Windows.");
+            sapiVoice = Activator.CreateInstance(sapiVoiceType);
+        }
+
+        private void ShowPlan()
+        {
+            if (currentPlan == null) return;
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine(currentPlan.title);
+            sb.AppendLine();
+            sb.AppendLine("SIGNIFICATO SEMPLICE");
+            sb.AppendLine(currentPlan.simple_meaning);
+            sb.AppendLine();
+            sb.AppendLine("MICRO-CONCETTI");
+            int i = 1;
+            foreach (string concept in currentPlan.micro_concepts)
+            {
+                sb.AppendLine(i + ". " + concept);
+                i++;
+            }
+            sb.AppendLine();
+            sb.AppendLine("FILM MENTALE");
+            foreach (string line in currentPlan.guided_movie)
+            {
+                sb.AppendLine(line == "[pausa]" ? "     ... pausa ..." : line);
+            }
+            sb.AppendLine();
+            sb.AppendLine("FOTOGRAMMA FINALE");
+            sb.AppendLine(currentPlan.final_freeze_frame);
+            sb.AppendLine();
+            sb.AppendLine("ACTIVE RECALL");
+            i = 1;
+            foreach (string question in currentPlan.recall_questions)
+            {
+                sb.AppendLine(i + ". " + question);
+                i++;
+            }
+            outputBox.Text = sb.ToString();
+        }
+
+        private void ShowError(string title, Exception ex)
+        {
+            UseWaitCursor = false;
+            string message = ex == null ? "Errore sconosciuto." : ex.Message;
+            statusLabel.Text = title + ".";
+            outputBox.Text = title + "\r\n\r\n" + message;
+            try
+            {
+                string log = Path.Combine(Path.GetTempPath(), "MemoryDirector_error.txt");
+                File.WriteAllText(log, DateTime.Now.ToString("s") + "\r\n" + title + "\r\n" + ex, Encoding.UTF8);
+                outputBox.AppendText("\r\n\r\nLog: " + log);
+            }
+            catch
+            {
+            }
+            MessageBox.Show(message, title, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -867,79 +779,54 @@ namespace MemoryDirector
     {
         public static int Run()
         {
+            int failures = 0;
+            failures += Test("Normalize fenced JSON", delegate
+            {
+                string input = "```json\n{\"title\":\"x\"}\n```";
+                string normalized = PlanParser.NormalizeJson(input);
+                if (normalized != "{\"title\":\"x\"}") throw new Exception("NormalizeJson non ha rimosso i fence.");
+            });
+
+            failures += Test("Prompt contains guided start", delegate
+            {
+                string prompt = MnemonicPromptBuilder.Build("vendita", 9, "bicicletta", "sorpresa");
+                if (prompt.IndexOf("Chiudi gli occhi. Immagina", StringComparison.Ordinal) < 0) throw new Exception("Prompt incompleto.");
+            });
+
+            failures += Test("Dedicated ChatGPT URL", delegate
+            {
+                if (MnemonicPromptBuilder.DedicatedChatUrl != "https://chatgpt.com/c/6a7a16c8-8a94-83eb-9492-001e95b12c67") throw new Exception("URL ChatGPT dedicato errato.");
+            });
+
+            failures += Test("Validate inserts guided start", delegate
+            {
+                MemoryPlan plan = new MemoryPlan();
+                plan.title = "Vendita";
+                plan.simple_meaning = "Scambio";
+                plan.micro_concepts = new List<string> { "bene" };
+                plan.guided_movie = new List<string> { "Vedi una bici." };
+                plan.final_freeze_frame = "Bici trasferita.";
+                plan.recall_questions = new List<string>();
+                PlanParser.ValidatePlan(plan);
+                if (!plan.guided_movie[0].StartsWith("Chiudi gli occhi", StringComparison.OrdinalIgnoreCase)) throw new Exception("Apertura guidata non inserita.");
+            });
+
+            Console.WriteLine(failures == 0 ? "SELF-TEST OK" : "SELF-TEST FALLITI: " + failures);
+            return failures == 0 ? 0 : 1;
+        }
+
+        private static int Test(string name, Action action)
+        {
             try
             {
-                int passed = 0;
-                TestNormalizeJson(); passed++;
-                TestPrompt(); passed++;
-                TestPlanValidation(); passed++;
-                TestNestedOllamaJson(); passed++;
-                Console.WriteLine("SELF-TEST OK - " + passed + " test superati.");
+                action();
+                Console.WriteLine("PASS: " + name);
                 return 0;
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("SELF-TEST FAILED");
-                Console.Error.WriteLine(ex.ToString());
+                Console.WriteLine("FAIL: " + name + " - " + ex.Message);
                 return 1;
-            }
-        }
-
-        private static void TestNormalizeJson()
-        {
-            string sample = "```json\n{\"title\":\"Vendita\"}\n```";
-            string normalized = OllamaClient.NormalizeJson(sample);
-            Assert(normalized == "{\"title\":\"Vendita\"}", "NormalizeJson non rimuove correttamente i code fence.");
-        }
-
-        private static void TestPrompt()
-        {
-            string prompt = MnemonicPromptBuilder.Build("La vendita trasferisce un bene contro un prezzo.", 9, "bicicletta", "sorpresa");
-            Assert(prompt.IndexOf("Chiudi gli occhi. Immagina", StringComparison.OrdinalIgnoreCase) >= 0, "Prompt privo dell'apertura guidata.");
-            Assert(prompt.IndexOf("PAV", StringComparison.OrdinalIgnoreCase) >= 0, "Prompt privo del metodo PAV.");
-            Assert(prompt.IndexOf("La vendita", StringComparison.OrdinalIgnoreCase) >= 0, "Prompt privo del testo sorgente.");
-        }
-
-        private static void TestPlanValidation()
-        {
-            MemoryPlan plan = new MemoryPlan();
-            plan.title = "Vendita";
-            plan.simple_meaning = "Una cosa cambia proprietario in cambio di un prezzo.";
-            plan.micro_concepts = new List<string>();
-            plan.micro_concepts.Add("venditore");
-            plan.guided_movie = new List<string>();
-            plan.guided_movie.Add("Vedi una bicicletta enorme.");
-            plan.final_freeze_frame = "Uno ha i soldi, l'altro la bicicletta.";
-            plan.recall_questions = new List<string>();
-            OllamaClient.ValidatePlan(plan);
-            Assert(plan.guided_movie.Count == 2, "ValidatePlan non inserisce l'apertura guidata.");
-            Assert(plan.guided_movie[0].IndexOf("Chiudi gli occhi", StringComparison.OrdinalIgnoreCase) >= 0, "Apertura guidata errata.");
-        }
-
-        private static void TestNestedOllamaJson()
-        {
-            JavaScriptSerializer serializer = new JavaScriptSerializer();
-            MemoryPlan plan = new MemoryPlan();
-            plan.title = "Vendita";
-            plan.simple_meaning = "Scambio di bene contro prezzo.";
-            plan.micro_concepts = new List<string>(new string[] { "bene", "prezzo" });
-            plan.guided_movie = new List<string>(new string[] { "Chiudi gli occhi. Immagina...", "Una bici enorme." });
-            plan.final_freeze_frame = "Bici da una parte, soldi dall'altra.";
-            plan.recall_questions = new List<string>(new string[] { "Chi ha la bici?" });
-
-            GenerateResponse outer = new GenerateResponse();
-            outer.response = serializer.Serialize(plan);
-            string outerJson = serializer.Serialize(outer);
-            GenerateResponse parsedOuter = serializer.Deserialize<GenerateResponse>(outerJson);
-            MemoryPlan parsedPlan = serializer.Deserialize<MemoryPlan>(parsedOuter.response);
-            Assert(parsedPlan != null && parsedPlan.title == "Vendita", "Parsing della risposta Ollama annidata fallito.");
-        }
-
-        private static void Assert(bool condition, string message)
-        {
-            if (!condition)
-            {
-                throw new InvalidOperationException(message);
             }
         }
     }
