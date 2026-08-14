@@ -17,7 +17,6 @@ echo [1/3] Compilo il test...
   /reference:System.Windows.Forms.dll ^
   /reference:System.Drawing.dll ^
   /reference:System.Web.Extensions.dll ^
-  /reference:System.Speech.dll ^
   "%~dp0MemoryDirector.cs"
 if errorlevel 1 goto :fail
 
@@ -30,7 +29,6 @@ echo [3/3] Compilo l'app Windows...
   /reference:System.Windows.Forms.dll ^
   /reference:System.Drawing.dll ^
   /reference:System.Web.Extensions.dll ^
-  /reference:System.Speech.dll ^
   "%~dp0MemoryDirector.cs"
 if errorlevel 1 goto :fail
 

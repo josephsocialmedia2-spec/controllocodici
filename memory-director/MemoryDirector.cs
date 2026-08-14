@@ -4,7 +4,7 @@ using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Net;
-using System.Speech.Synthesis;
+using System.Reflection;
 using System.Text;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -395,7 +395,7 @@ namespace MemoryDirector
         private readonly TextBox emotionsBox = new TextBox();
         private readonly BackgroundWorker generateWorker = new BackgroundWorker();
         private readonly BackgroundWorker testWorker = new BackgroundWorker();
-        private SpeechSynthesizer speaker;
+        private object speaker;
         private MemoryPlan currentPlan;
 
         public MainForm()
@@ -668,21 +668,27 @@ namespace MemoryDirector
                 try
                 {
                     EnsureSpeaker();
-                    speaker.SpeakAsyncCancelAll();
-                    System.Speech.Synthesis.PromptBuilder speech = new System.Speech.Synthesis.PromptBuilder();
+                    StopSpeaker();
+                    StringBuilder spoken = new StringBuilder();
                     foreach (string line in currentPlan.guided_movie)
                     {
                         if (string.Equals(line, "[pausa]", StringComparison.OrdinalIgnoreCase))
                         {
-                            speech.AppendBreak(TimeSpan.FromMilliseconds(1100));
+                            spoken.Append(" ... ... ");
                         }
                         else if (!string.IsNullOrWhiteSpace(line))
                         {
-                            speech.AppendText(line);
-                            speech.AppendBreak(TimeSpan.FromMilliseconds(250));
+                            spoken.Append(line);
+                            spoken.Append(" ... ");
                         }
                     }
-                    speaker.SpeakAsync(speech);
+                    speaker.GetType().InvokeMember(
+                        "Speak",
+                        BindingFlags.InvokeMethod,
+                        null,
+                        speaker,
+                        new object[] { spoken.ToString(), 1 }
+                    );
                     statusLabel.Text = "Voce guidata avviata.";
                 }
                 catch (Exception ex)
@@ -695,10 +701,7 @@ namespace MemoryDirector
             {
                 try
                 {
-                    if (speaker != null)
-                    {
-                        speaker.SpeakAsyncCancelAll();
-                    }
+                    StopSpeaker();
                     statusLabel.Text = "Voce fermata.";
                 }
                 catch
@@ -730,8 +733,9 @@ namespace MemoryDirector
             {
                 if (speaker != null)
                 {
-                    try { speaker.SpeakAsyncCancelAll(); } catch { }
-                    try { speaker.Dispose(); } catch { }
+                    try { StopSpeaker(); } catch { }
+                    try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(speaker); } catch { }
+                    speaker = null;
                 }
             };
         }
@@ -742,22 +746,28 @@ namespace MemoryDirector
             {
                 return;
             }
-            speaker = new SpeechSynthesizer();
-            speaker.Rate = -2;
-            try
+
+            Type sapiType = Type.GetTypeFromProgID("SAPI.SpVoice");
+            if (sapiType == null)
             {
-                foreach (InstalledVoice voice in speaker.GetInstalledVoices())
-                {
-                    if (voice.Enabled && voice.VoiceInfo.Culture != null && voice.VoiceInfo.Culture.Name.StartsWith("it", StringComparison.OrdinalIgnoreCase))
-                    {
-                        speaker.SelectVoice(voice.VoiceInfo.Name);
-                        break;
-                    }
-                }
+                throw new InvalidOperationException("Sintesi vocale Windows SAPI non disponibile.");
             }
-            catch
+            speaker = Activator.CreateInstance(sapiType);
+        }
+
+        private void StopSpeaker()
+        {
+            if (speaker == null)
             {
+                return;
             }
+            speaker.GetType().InvokeMember(
+                "Speak",
+                BindingFlags.InvokeMethod,
+                null,
+                speaker,
+                new object[] { string.Empty, 3 }
+            );
         }
 
         private void ShowError(string heading, Exception ex)

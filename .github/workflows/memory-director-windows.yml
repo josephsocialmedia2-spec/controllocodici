@@ -35,7 +35,6 @@ jobs:
           /reference:System.Windows.Forms.dll
           /reference:System.Drawing.dll
           /reference:System.Web.Extensions.dll
-          /reference:System.Speech.dll
           memory-director\MemoryDirector.cs
 
       - name: Run self-tests
@@ -50,7 +49,6 @@ jobs:
           /reference:System.Windows.Forms.dll
           /reference:System.Drawing.dll
           /reference:System.Web.Extensions.dll
-          /reference:System.Speech.dll
           memory-director\MemoryDirector.cs
 
       - name: Package release ZIP
