@@ -6,6 +6,7 @@ on:
       - memory-director-chatgpt-final
     paths:
       - 'memory-director-chatgpt/MemoryDirector.Cascade.cs'
+      - 'memory-director-chatgpt/patch-json-compat.ps1'
       - 'memory-director-chatgpt/README.md'
       - '.github/workflows/memory-director-cascade-windows.yml'
   workflow_dispatch:
@@ -17,6 +18,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Apply JSON compatibility patch
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File memory-director-chatgpt\patch-json-compat.ps1
 
       - name: Locate .NET Framework compiler
         shell: powershell
