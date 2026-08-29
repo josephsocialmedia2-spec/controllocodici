@@ -50,8 +50,8 @@ def load_job(path: Path) -> dict:
 
 
 def watch(home: Path, orchestrator: Orchestrator, config: dict, once: bool = False, interval: int = 5):
-    inbox, processed, needs_decision, failed, temp = [home / x for x in ["INBOX", "PROCESSED", "NEEDS_DECISION", "FAILED", "TEMP"]]
-    for p in (inbox, processed, needs_decision, failed, temp):
+    inbox, processed, partial, needs_decision, failed, temp = [home / x for x in ["INBOX", "PROCESSED", "PARTIAL", "NEEDS_DECISION", "FAILED", "TEMP"]]
+    for p in (inbox, processed, partial, needs_decision, failed, temp):
         p.mkdir(parents=True, exist_ok=True)
     while True:
         candidates = [p for p in inbox.iterdir() if not p.name.startswith(".")]
@@ -75,7 +75,11 @@ def watch(home: Path, orchestrator: Orchestrator, config: dict, once: bool = Fal
                 if status == "OK":
                     destination_root = processed
                     title = "Programma pronto"
-                    message = f"{job.get('name', item.stem)}: pronto e verificato. Risultati: {report.get('run_root')}"
+                    message = f"{job.get('name', item.stem)}: pronto e verificato funzionalmente. Risultati: {report.get('run_root')}"
+                elif status == "PARZIALE":
+                    destination_root = partial
+                    title = "Verifica funzionale incompleta"
+                    message = f"{job.get('name', item.stem)}: compila o supera controlli parziali, ma non è stato dimostrato il funzionamento reale. Risultati: {report.get('run_root')}"
                 elif status == "NEEDS_DECISION":
                     destination_root = needs_decision
                     decision = report.get("decision") or {}
