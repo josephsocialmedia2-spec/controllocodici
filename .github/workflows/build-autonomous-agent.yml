@@ -1,0 +1,49 @@
+name: Build Autonomous Software Agent
+
+on:
+  push:
+    paths:
+      - 'autonomous-software-agent/**'
+      - '.github/workflows/build-autonomous-agent.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-build-test-install:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: autonomous-software-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: autonomous-software-agent/requirements-build.txt
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements-build.txt
+      - name: Unit and integration tests
+        env:
+          PYTHONPATH: src
+        run: python -m pytest -q
+      - name: Build Windows EXE
+        run: pyinstaller --noconfirm --clean --onefile --name AutonomousSoftwareAgent --paths src --add-data "config.default.json;." --add-data "prompts;prompts" --collect-all rapidocr --collect-all onnxruntime src/asa/cli.py
+      - name: Test built EXE
+        run: .\dist\AutonomousSoftwareAgent.exe --self-test
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Compile installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" install\installer.iss'
+        shell: powershell
+      - name: Silent installation test
+        run: |
+          $target = Join-Path $env:TEMP "ASA-Test"
+          .\output\AutonomousSoftwareAgent-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$target"
+          & "$target\AutonomousSoftwareAgent.exe" --self-test
+        shell: powershell
+      - name: Upload tested installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutonomousSoftwareAgent-Windows-Tested
+          path: autonomous-software-agent/output/AutonomousSoftwareAgent-Setup.exe
+          if-no-files-found: error

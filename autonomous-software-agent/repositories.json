@@ -1,0 +1,21 @@
+{
+  "owner": "josephsocialmedia2-spec",
+  "mode": "clone-workspace-only",
+  "never_overwrite_main": true,
+  "repositories": [
+    "video-leadgen-ai",
+    "ugs-generator",
+    "immobili-in-zona",
+    "open-social-scheduler",
+    "launcher-dashboard",
+    "DIGITALSTRATEGIST",
+    "SOCIAL-MEDIA-WEB-AGENCY",
+    "SOCIALMEDIAWEBAGENCY",
+    "crescita-social",
+    "QUESTIONARIO-DI-QUALIFICAZIONE",
+    "analisi-questionario",
+    "modus-tao-art-of-war",
+    "leadconattipdf",
+    "acquisizionesusa"
+  ]
+}
