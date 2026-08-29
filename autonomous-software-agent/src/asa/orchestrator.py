@@ -25,18 +25,44 @@ class Orchestrator:
     def __init__(self, home: Path, repair_backend: RepairBackend | None = None, master_prompt: str = "", max_iterations: int = 6):
         self.home = home; self.repair_backend = repair_backend or OllamaBackend(); self.master_prompt = master_prompt; self.max_iterations = max_iterations
 
-    def _score(self, results: list[dict], output_ok: bool = True) -> int:
-        if not results: return 100 if output_ok else 0
-        passed = sum(1 for r in results if r["exit_code"] == 0)
-        return int((passed / len(results)) * 90 + (10 if output_ok else 0))
+    @staticmethod
+    def _is_syntax_or_build_only(command: str) -> bool:
+        cmd = command.lower()
+        markers = [
+            "compileall",
+            "py_compile",
+            "node --check",
+            "npm run build",
+            "pnpm build",
+            "yarn build",
+            "tsc --noemit",
+            "ruff ",
+            "flake8",
+            "mypy",
+        ]
+        return any(marker in cmd for marker in markers)
 
-    def _run_plan(self, work: Path, job: dict) -> tuple[list[dict], bool]:
+    def _score(self, results: list[dict], functional_verified: bool) -> int:
+        if not results:
+            return 0
+        passed = sum(1 for r in results if r["exit_code"] == 0)
+        base = int((passed / len(results)) * 70)
+        return min(100, base + (30 if functional_verified and passed == len(results) else 0))
+
+    def _run_plan(self, work: Path, job: dict) -> tuple[list[dict], bool, bool, str]:
         plan = detect_project(work, job)
         results = [run_command(cmd, work, int(job.get("timeout", 300))).to_dict() for cmd in plan.test_commands]
         passed = all(r["exit_code"] == 0 for r in results) if results else True
+        functional_verified = bool(results) and passed and any(
+            not self._is_syntax_or_build_only(r["command"]) for r in results
+        )
         if passed and plan.run_command and job.get("verify_run", False):
-            r = run_command(plan.run_command, work, int(job.get("run_timeout", 120))).to_dict(); results.append(r); passed = passed and r["exit_code"] == 0
-        return results, passed
+            r = run_command(plan.run_command, work, int(job.get("run_timeout", 120))).to_dict()
+            results.append(r)
+            passed = passed and r["exit_code"] == 0
+            functional_verified = functional_verified or r["exit_code"] == 0
+        validation_level = "functional" if functional_verified and passed else ("syntax_only" if results and passed else "failed")
+        return results, passed, functional_verified and passed, validation_level
 
     def _request_fields(self, job: dict) -> tuple[str, list[str], list[str]]:
         goal = str(job.get("goal") or job.get("request") or "").strip()
@@ -48,13 +74,21 @@ class Orchestrator:
 
     def _client_prompt(self, job: dict) -> str:
         goal, instructions, acceptance = self._request_fields(job)
+        default_goal = (
+            "Autonomously inspect the software for real functional defects, unsafe behavior, broken outputs, "
+            "missing execution checks and quality regressions; improve it only where justified and verify the result."
+        )
         return (
             self.master_prompt
             + "\n\nCLIENT REQUEST — HIGHEST PRIORITY WITHIN SAFE PROJECT SCOPE:\n"
-            + f"GOAL: {goal or 'Restore and improve the software while preserving working behavior.'}\n"
+            + f"GOAL: {goal or default_goal}\n"
             + "REQUESTED CHANGES:\n" + "\n".join(f"- {x}" for x in instructions)
             + "\nACCEPTANCE CRITERIA:\n" + "\n".join(f"- {x}" for x in acceptance)
-            + "\nA green baseline does NOT mean the client request is complete. Inspect the code and implement the requested change when it is not already satisfied. Do not reinterpret a clear client requirement as optional. Prefer autonomous tested implementation. Ask only for a materially consequential unresolved choice."
+            + "\nA green syntax/build baseline does NOT prove the software works. Inspect behavior and outputs. "
+              "If meaningful automated tests or executable verification are missing, create safe tests or verification when feasible. "
+              "Never fabricate functional success. If real behavior depends on unavailable credentials, devices, external services or user interaction, explain the limitation instead of declaring it verified. "
+              "A green baseline does NOT mean an explicit client request is complete. Implement the requested change when it is not already satisfied. "
+              "Prefer autonomous tested implementation. Ask only for a materially consequential unresolved choice."
         )
 
     def process(self, job: dict, source_override: Path | None = None) -> dict:
@@ -73,6 +107,8 @@ class Orchestrator:
         explicit_request = bool(goal or instructions or acceptance)
         request_evaluated = False
         request_no_change_needed = False
+        audit_required = bool(job.get("autonomous_audit", True))
+        audit_evaluated = False
         revision = 0
         history = []
         best_key = (-1, -1)
@@ -83,8 +119,8 @@ class Orchestrator:
         client_prompt = self._client_prompt(job)
         max_iterations = max(1, int(job.get("max_iterations", self.max_iterations)))
         for iteration in range(max_iterations + 1):
-            results, passed = self._run_plan(work, job)
-            score = self._score(results)
+            results, passed, functional_verified, validation_level = self._run_plan(work, job)
+            score = self._score(results, functional_verified)
             current_key = (score, revision)
             changed = []
             reason = "Baseline" if iteration == 0 else "Retest"
@@ -101,14 +137,19 @@ class Orchestrator:
             write_json(logs / f"iteration-{iteration:02d}.json", item.__dict__)
 
             need_request_review = explicit_request and not request_evaluated
-            if passed and not need_request_review:
+            need_audit_review = audit_required and not audit_evaluated
+            need_ai_review = need_request_review or need_audit_review
+
+            if passed and functional_verified and not need_ai_review:
                 break
             if iteration >= max_iterations or stagnant >= 3:
                 break
 
             failures = [r for r in results if r["exit_code"] != 0]
             proposal = self.repair_backend.propose(client_prompt, work, failures, iteration + 1)
-            request_evaluated = request_evaluated or need_request_review
+            if need_request_review:
+                request_evaluated = True
+            audit_evaluated = True
 
             if proposal.requires_user_choice or (proposal.files and proposal.confidence < float(job.get("minimum_autonomous_confidence", 0.55))):
                 decision = {"reason": proposal.reason, "choices": proposal.choices, "confidence": proposal.confidence}
@@ -128,12 +169,14 @@ class Orchestrator:
             item.reason = proposal.reason
             write_json(logs / f"iteration-{iteration:02d}.json", item.__dict__)
 
-        final_results, final_passed = self._run_plan(best, job)
+        final_results, final_passed, final_functional_verified, final_validation_level = self._run_plan(best, job)
         request_satisfied = (not explicit_request) or request_no_change_needed or best_revision > 0
         if decision:
             status = "NEEDS_DECISION"
-        elif final_passed and request_satisfied:
+        elif final_passed and request_satisfied and final_functional_verified:
             status = "OK"
+        elif final_passed:
+            status = "PARZIALE"
         elif best_score > 0:
             status = "PARZIALE"
         else:
@@ -149,6 +192,9 @@ class Orchestrator:
             "best_revision": best_revision,
             "request_evaluated": request_evaluated,
             "request_satisfied": request_satisfied,
+            "audit_evaluated": audit_evaluated,
+            "functional_verified": final_functional_verified,
+            "validation_level": final_validation_level,
             "final_test_results": final_results,
             "iterations": [h.__dict__ for h in history],
             "decision": decision,
