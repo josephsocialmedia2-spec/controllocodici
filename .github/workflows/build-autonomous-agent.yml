@@ -38,8 +38,17 @@ jobs:
       - name: Silent installation test
         run: |
           $target = Join-Path $env:TEMP "ASA-Test"
-          .\output\AutonomousSoftwareAgent-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$target"
-          & "$target\AutonomousSoftwareAgent.exe" --self-test
+          if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+          $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$target")
+          $setup = Start-Process -FilePath '.\output\AutonomousSoftwareAgent-Setup.exe' -ArgumentList $args -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Installer exit code: $($setup.ExitCode)" }
+          $installedExe = Join-Path $target 'AutonomousSoftwareAgent.exe'
+          if (-not (Test-Path $installedExe)) {
+            Get-ChildItem $target -Recurse -ErrorAction SilentlyContinue | Format-Table FullName
+            throw "Installed EXE not found: $installedExe"
+          }
+          & $installedExe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Installed EXE self-test failed with exit code $LASTEXITCODE" }
         shell: powershell
       - name: Upload tested installer
         uses: actions/upload-artifact@v4
