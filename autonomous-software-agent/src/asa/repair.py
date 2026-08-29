@@ -74,10 +74,19 @@ Return ONLY JSON with this schema:
 {{"reason":"...","requires_user_choice":false,"choices":[],"confidence":0.95,"files":{{"relative/path.ext":"complete replacement content"}}}}
 Never use absolute paths."""
         payload = {"model": self.model, "stream": False, "format": "json", "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": user}]}
-        response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        raw = response.json().get("message", {}).get("content", "{}")
-        data = json.loads(raw)
+        try:
+            response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise RepairError(
+                f"Motore AI Ollama non raggiungibile su {self.base_url}. "
+                f"Verificare che Ollama sia installato, attivo e che il modello {self.model} sia disponibile."
+            ) from exc
+        try:
+            raw = response.json().get("message", {}).get("content", "{}")
+            data = json.loads(raw)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RepairError("Ollama ha restituito una risposta non valida") from exc
         files = data.get("files") or {}
         if not isinstance(files, dict):
             raise RepairError("Backend returned invalid files mapping")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .notifications import notify
 from .orchestrator import Orchestrator
-from .utils import read_json, safe_name
+from .utils import read_json, safe_name, write_json
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
@@ -47,6 +47,32 @@ def load_job(path: Path) -> dict:
             "synthesize_audio": True,
         }
     return {"name": path.name, "type": "software", "source": {"type": "local", "path": str(path)}}
+
+
+def _move_failed_item(item: Path, failed: Path, exc: Exception) -> Path | None:
+    stamp = int(time.time())
+    destination = failed / f"{safe_name(item.stem)}-{stamp}"
+    try:
+        if item.is_dir():
+            shutil.move(str(item), str(destination))
+            write_json(destination / "error.json", {
+                "status": "FAILED",
+                "item": item.name,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            })
+            return destination
+        moved = destination.with_suffix(item.suffix)
+        shutil.move(str(item), str(moved))
+        write_json(failed / f"{safe_name(item.stem)}-{stamp}-error.json", {
+            "status": "FAILED",
+            "item": item.name,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        })
+        return moved
+    except Exception:
+        return None
 
 
 def watch(home: Path, orchestrator: Orchestrator, config: dict, once: bool = False, interval: int = 5):
@@ -97,7 +123,9 @@ def watch(home: Path, orchestrator: Orchestrator, config: dict, once: bool = Fal
                     shutil.move(str(item), str(destination.with_suffix(item.suffix)))
                 notify(config, title, message)
             except Exception as exc:
-                notify(config, "Errore Autonomous Software Agent", f"{item.name}: {exc}")
+                moved_to = _move_failed_item(item, failed, exc) if item.exists() else None
+                where = f" Spostato in: {moved_to}" if moved_to else ""
+                notify(config, "Errore Autonomous Software Agent", f"{item.name}: {exc}.{where}")
             finally:
                 if extracted and extracted.exists():
                     shutil.rmtree(extracted, ignore_errors=True)
