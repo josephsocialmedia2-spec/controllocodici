@@ -1,0 +1,41 @@
+name: autonomous-software-agent-windows
+on:
+  pull_request:
+    paths:
+      - 'autonomous-software-agent/**'
+      - '.github/workflows/autonomous-software-agent-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  build-test-install:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: autonomous-software-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Source self-test
+        run: python agent.py self-test
+      - name: Build EXE
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          pyinstaller --onefile --name AutonomousSoftwareAgent agent.py
+      - name: EXE self-test
+        run: .\dist\AutonomousSoftwareAgent.exe self-test
+      - name: Silent install test
+        shell: powershell
+        run: |
+          Copy-Item .\dist\AutonomousSoftwareAgent.exe .\windows\AutonomousSoftwareAgent.exe
+          powershell -ExecutionPolicy Bypass -File .\windows\INSTALLA.ps1 -InstallRoot "$env:RUNNER_TEMP\ASA"
+          & "$env:RUNNER_TEMP\ASA\AutonomousSoftwareAgent.exe" self-test
+          if ($LASTEXITCODE -ne 0) { throw "Installed EXE self-test failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutonomousSoftwareAgent-Windows
+          path: |
+            autonomous-software-agent/dist/AutonomousSoftwareAgent.exe
+            autonomous-software-agent/windows/INSTALLA.ps1
+            autonomous-software-agent/windows/DISINSTALLA.ps1
