@@ -37,7 +37,7 @@ def load_config(home: Path, explicit: str | None = None) -> dict:
 
 
 def ensure_layout(home: Path):
-    for name in ["INBOX", "PROCESSED", "NEEDS_DECISION", "FAILED", "RUNS", "TEMP"]:
+    for name in ["INBOX", "PROCESSED", "PARTIAL", "NEEDS_DECISION", "FAILED", "RUNS", "TEMP"]:
         (home / name).mkdir(parents=True, exist_ok=True)
 
 
@@ -72,6 +72,8 @@ def main(argv=None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         if report["status"] == "OK":
             title = "Programma pronto"
+        elif report["status"] == "PARZIALE":
+            title = "Verifica funzionale incompleta"
         elif report["status"] == "NEEDS_DECISION":
             title = "Decisione necessaria"
         else:
