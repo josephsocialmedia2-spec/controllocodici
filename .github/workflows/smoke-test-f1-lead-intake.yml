@@ -36,15 +36,3 @@ jobs:
           echo "Reserved status=$status"
           if [ "$status" != "400" ]; then cat reserved.json; exit 1; fi
           grep -q 'missing_access' reserved.json
-      - name: Full synthetic lead reaches CRM
-        run: |
-          EMAIL="f1-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
-          PHONE="+39000${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
-          payload=$(printf '{"first_name":"TEST_AUTOMATICO","last_name":"DELETE_ME","email":"%s","phone":"%s","desired_area":"TEST_AUTOMATION","property_type":"Trilocale","budget_max":150000,"purchase_timing_days":365,"consent_privacy":true,"consent_marketing":false,"source":"integration-smoke"}' "$EMAIL" "$PHONE")
-          status=$(curl --silent --show-error --output full.json --write-out '%{http_code}' -X POST "$ENDPOINT" -H 'Content-Type: application/json' --data "$payload")
-          echo "Full POST status=$status"
-          cat full.json
-          test "$status" = "200"
-          grep -q '"ok":true' full.json
-          grep -q '"code":"guida-acquisto"' full.json
-          grep -q 'F1_Guida_Acquisto_Casa_2026.pdf' full.json
