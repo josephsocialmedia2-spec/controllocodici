@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>F1 · Coda invii manuali</title>
+<style>
+:root{--n:#0e2742;--g:#197447;--o:#c3a15c;--bg:#eef2f6;--l:#d7dee7;--t:#1d2939;--m:#667085}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--t)}
+main{max-width:1180px;margin:auto;padding:24px 14px 60px}.hero{background:linear-gradient(135deg,var(--n),#153a60);color:#fff;padding:30px;border-radius:22px;border-bottom:5px solid var(--o)}
+.hero p{color:#d8e1ea;line-height:1.5}.card{background:#fff;border:1px solid var(--l);border-radius:16px;padding:20px;margin-top:14px}.top{display:flex;justify-content:space-between;gap:16px}.top h2{margin:0 0 5px}.top p{margin:0;color:var(--m)}.top span{font-size:12px;color:var(--m)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.actions a,.actions button{border:0;border-radius:9px;padding:11px 13px;text-decoration:none;font-weight:800;cursor:pointer}.wa{background:var(--g);color:#fff}.mail{background:var(--n);color:#fff}.open{background:var(--o);color:#182230}.actions button{background:#f3f5f7;color:#182230;border:1px solid var(--l)}
+.status{display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--m)}.loading,.error{background:#fff;border:1px solid var(--l);border-radius:16px;padding:20px;margin-top:14px}.error{border-color:#f4b7b2;color:#a52a2a}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.toolbar button{border:0;border-radius:9px;padding:10px 13px;font-weight:800;cursor:pointer}.refresh{background:#fff;color:var(--n)}
+@media(max-width:700px){.top{display:block}.top span{display:block;margin-top:7px}}
+</style>
+</head>
+<body>
+<main>
+<section class="hero">
+  <h1>F1 · CODA INVII MANUALI</h1>
+  <p>Nessun messaggio viene inviato automaticamente. Apri WhatsApp o Email, controlla il testo e premi tu <b>Invia</b>.</p>
+  <p id="senders"></p>
+  <div class="toolbar"><button class="refresh" onclick="loadQueue()">AGGIORNA CODA</button></div>
+</section>
+<div id="app" class="loading">Caricamento coda…</div>
+</main>
+<script>
+const API='https://nqnmlsmeiynxbdojeyjt.supabase.co/functions/v1/f1-manual-delivery';
+const params=new URLSearchParams(location.search);const KEY=params.get('key')||'';
+const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmt=d=>d?new Date(d).toLocaleString('it-IT'):'—';
+async function loadQueue(){
+ const app=document.getElementById('app');app.className='loading';app.textContent='Caricamento coda…';
+ if(!KEY){app.className='error';app.textContent='Chiave di accesso mancante.';return;}
+ try{
+  const r=await fetch(API+'?key='+encodeURIComponent(KEY),{cache:'no-store'});const j=await r.json();
+  if(!r.ok||!j.ok)throw Error(j.message||'Errore caricamento');
+  document.getElementById('senders').innerHTML='<b>WhatsApp operativo:</b> '+esc(j.senders.whatsapp)+' &nbsp; · &nbsp; <b>Email:</b> '+esc(j.senders.email);
+  const items=j.items||[];
+  if(!items.length){app.className='card';app.textContent='Nessun lead presente.';return;}
+  app.className='';app.innerHTML=items.map(l=>{
+   const waDone=l.manual_whatsapp_sent_at?'Inviato '+fmt(l.manual_whatsapp_sent_at):'Da inviare';
+   const emDone=l.manual_email_sent_at?'Inviata '+fmt(l.manual_email_sent_at):'Da inviare';
+   return `<article class="card"><div class="top"><div><h2>${esc(l.name||'Lead senza nome')}</h2><p>${esc(l.desired_area||'')} · ${esc(l.property_type||'')} · score ${esc(l.lead_score)} · <b>${esc(l.lead_temperature||'')}</b></p></div><span>${fmt(l.created_at)}</span></div><p><b>Materiale:</b> ${esc(l.material_title||'')}</p><p><b>Telefono:</b> ${esc(l.phone||'-')} &nbsp; <b>Email:</b> ${esc(l.email||'-')}</p><div class="actions">${l.whatsapp_url?`<a class="wa" href="${esc(l.whatsapp_url)}" target="_blank" rel="noopener">APRI WHATSAPP</a><button onclick="markSent('${esc(l.id)}','whatsapp',this)">SEGNA WHATSAPP INVIATO</button>`:''}${l.email_url?`<a class="mail" href="${esc(l.email_url)}">APRI EMAIL</a><button onclick="markSent('${esc(l.id)}','email',this)">SEGNA EMAIL INVIATA</button>`:''}${l.delivery_url?`<a class="open" href="${esc(l.delivery_url)}" target="_blank" rel="noopener">APRI MATERIALE</a>`:''}</div><div class="status"><span>WhatsApp: ${esc(waDone)}</span><span>Email: ${esc(emDone)}</span></div></article>`;
+  }).join('');
+ }catch(e){app.className='error';app.textContent=e.message||'Errore';}
+}
+async function markSent(id,channel,btn){
+ btn.disabled=true;const old=btn.textContent;btn.textContent='REGISTRAZIONE…';
+ try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:KEY,lead_id:id,channel})});const j=await r.json();if(!r.ok||!j.ok)throw Error(j.message||'Errore');btn.textContent='REGISTRATO';setTimeout(loadQueue,500)}catch(e){btn.disabled=false;btn.textContent=old;alert(e.message||'Errore')}
+}
+loadQueue();
+</script>
+</body>
+</html>
