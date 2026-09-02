@@ -15,7 +15,9 @@ jobs:
     steps:
       - name: GET landing is live
         run: |
-          curl --fail --silent --show-error --location "$ENDPOINT" -o landing.html
+          status=$(curl --silent --show-error --location --output landing.html --write-out '%{http_code}' "$ENDPOINT")
+          echo "GET status=$status"
+          if [ "$status" != "200" ]; then cat landing.html; exit 1; fi
           grep -q "Prima di comprare casa" landing.html
           grep -q "RICEVI IL CONTENUTO" landing.html
       - name: POST validation executes without storing a lead
@@ -24,11 +26,13 @@ jobs:
             -X POST "$ENDPOINT" \
             -H 'Content-Type: application/json' \
             --data '{"first_name":"","email":"not-an-email","phone":"1","consent_privacy":false}')
-          test "$status" = "422"
+          echo "POST status=$status"
+          if [ "$status" != "422" ]; then cat response.json; exit 1; fi
           grep -q 'required_fields' response.json
       - name: Reserved list rejects missing token
         run: |
           status=$(curl --silent --show-error --output reserved.json --write-out '%{http_code}' \
             "$ENDPOINT?view=reserved")
-          test "$status" = "400"
+          echo "Reserved status=$status"
+          if [ "$status" != "400" ]; then cat reserved.json; exit 1; fi
           grep -q 'missing_access' reserved.json
