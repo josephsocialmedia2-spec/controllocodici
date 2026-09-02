@@ -10,7 +10,7 @@ on:
       - 'strategies/real-estate-ads/**'
 
 jobs:
-  test:
+  python-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -23,3 +23,12 @@ jobs:
       - run: python -m py_compile ads_engine.py lead_magnet_engine.py test_ads_engine.py test_lead_magnet_engine.py
       - run: python -m pip install pytest
       - run: python -m pytest -q
+
+  edge-function-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check strategies/real-estate-ads/edge/f1-lead-intake/index.ts
