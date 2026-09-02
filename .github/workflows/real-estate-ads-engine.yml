@@ -20,6 +20,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m py_compile ads_engine.py test_ads_engine.py
+      - run: python -m py_compile ads_engine.py lead_magnet_engine.py test_ads_engine.py test_lead_magnet_engine.py
       - run: python -m pip install pytest
-      - run: python -m pytest -q test_ads_engine.py
+      - run: python -m pytest -q
