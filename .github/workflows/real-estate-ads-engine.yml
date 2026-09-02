@@ -1,0 +1,25 @@
+name: Real Estate Ads Engine
+
+on:
+  push:
+    paths:
+      - 'strategies/real-estate-ads/**'
+      - '.github/workflows/real-estate-ads-engine.yml'
+  pull_request:
+    paths:
+      - 'strategies/real-estate-ads/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: strategies/real-estate-ads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m py_compile ads_engine.py test_ads_engine.py
+      - run: python -m pip install pytest
+      - run: python -m pytest -q test_ads_engine.py
