@@ -1,0 +1,34 @@
+name: Smoke Test F1 Lead Intake
+
+on:
+  push:
+    paths:
+      - '.github/workflows/smoke-test-f1-lead-intake.yml'
+      - 'strategies/real-estate-ads/edge/f1-lead-intake/**'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      ENDPOINT: https://nqnmlsmeiynxbdojeyjt.supabase.co/functions/v1/f1-lead-intake
+    steps:
+      - name: GET landing is live
+        run: |
+          curl --fail --silent --show-error --location "$ENDPOINT" -o landing.html
+          grep -q "Prima di comprare casa" landing.html
+          grep -q "RICEVI IL CONTENUTO" landing.html
+      - name: POST validation executes without storing a lead
+        run: |
+          status=$(curl --silent --show-error --output response.json --write-out '%{http_code}' \
+            -X POST "$ENDPOINT" \
+            -H 'Content-Type: application/json' \
+            --data '{"first_name":"","email":"not-an-email","phone":"1","consent_privacy":false}')
+          test "$status" = "422"
+          grep -q 'required_fields' response.json
+      - name: Reserved list rejects missing token
+        run: |
+          status=$(curl --silent --show-error --output reserved.json --write-out '%{http_code}' \
+            "$ENDPOINT?view=reserved")
+          test "$status" = "400"
+          grep -q 'missing_access' reserved.json
